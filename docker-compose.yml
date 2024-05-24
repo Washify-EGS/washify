@@ -1,0 +1,35 @@
+services:
+  mysql_db:
+    build:
+      context: ./composerDB
+      dockerfile: Dockerfile
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - composer-network
+
+  node_sv:
+    build:
+      context: ./composerSV
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+    ports:
+      - "3001:3001"
+    depends_on:
+      - mysql_db
+    volumes:
+      - ./composerSV:/usr/src/app
+    networks:
+      - composer-network
+
+networks:
+  composer-network:
+    driver: bridge
+
+volumes:
+  mysql_data:
