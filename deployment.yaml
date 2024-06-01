@@ -1,0 +1,574 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: egs-washify
+  
+---
+# Flutter Web Application Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flutter-web-app
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flutter-web-app
+  template:
+    metadata:
+      labels:
+        app: flutter-web-app
+    spec:
+      containers:
+      - name: flutter-web-app
+        image: registry.deti/egs-washify/flutter-web-app:v3
+        ports:
+        - containerPort: 80
+
+---
+# Flutter Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: flutter-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: flutter-web-app
+  ports:
+    - protocol: TCP
+      port: 81
+      targetPort: 80
+  type: LoadBalancer
+
+---
+# Node.js Application Deployment for ComposerSV
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: node-sv
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: node-sv
+  template:
+    metadata:
+      labels:
+        app: node-sv
+    spec:
+      containers:
+      - name: node-sv
+        image: registry.deti/egs-washify/node-sv:v3
+        ports:
+        - containerPort: 3001
+        env:
+        - name: DB_HOST
+          value: "mysql-db-service"
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_USER
+          value: "root"
+        - name: DB_PASSWORD
+          value: "password"
+        - name: DB_NAME
+          value: "WASHIFY"
+
+
+---
+# Node.js Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-sv-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: node-sv
+  ports:
+    - protocol: TCP
+      port: 82
+      targetPort: 3001
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-initdb
+  namespace: egs-washify
+data:
+  db.sql: |
+    CREATE DATABASE WASHIFY;
+    USE WASHIFY;
+
+    CREATE TABLE users (
+        id VARCHAR(255) NOT NULL,
+        username VARCHAR(255) NOT NULL,
+        PRIMARY KEY (id)
+    );
+
+    CREATE TABLE bookings (
+        booking_uuid VARCHAR(36) NOT NULL,
+        booking_type VARCHAR(255) NOT NULL,
+        user_id VARCHAR(255) NOT NULL,
+        payment_status BOOLEAN DEFAULT FALSE,
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        PRIMARY KEY (booking_uuid)
+    );
+
+    CREATE TABLE payments (
+        payment_uuid VARCHAR(36) NOT NULL,
+        booking_uuid VARCHAR(36) NOT NULL,
+        FOREIGN KEY (booking_uuid) REFERENCES bookings(booking_uuid),
+        PRIMARY KEY (payment_uuid)
+    );
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-db
+  namespace: egs-washify
+spec:
+  selector:
+    matchLabels:
+      app: mysql-db
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql-db
+    spec:
+      initContainers:
+      - name: copy-sql
+        image: busybox
+        command: ['sh', '-c', 'cp /config/db.sql /docker-entrypoint-initdb.d/']
+        volumeMounts:
+        - name: initdb
+          mountPath: /config
+        - name: mysql-initdb
+          mountPath: /docker-entrypoint-initdb.d
+      containers:
+      - name: mysql
+        image: mysql:5.7
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: password
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mysql-initdb
+          mountPath: /docker-entrypoint-initdb.d
+      volumes:
+      - name: initdb
+        configMap:
+          name: mysql-initdb
+      - name: mysql-initdb
+        emptyDir: {}
+        
+---
+# MySQL Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-db-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: mysql-db
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+  type: ClusterIP
+
+---
+# IAM Service Deployment (iamService)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-service
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iam-service
+  template:
+    metadata:
+      labels:
+        app: iam-service
+    spec:
+      containers:
+      - name: iam-service
+        image: registry.deti/egs-washify/iam-service:v4
+        ports:
+        - containerPort: 8000
+
+---
+# IAM Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: iam-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: iam-service
+  ports:
+    - protocol: TCP
+      port: 83
+      targetPort: 8000
+  type: LoadBalancer
+
+---
+# IAM BackOffice Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam-backoffice
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iam-backoffice
+  template:
+    metadata:
+      labels:
+        app: iam-backoffice
+    spec:
+      containers:
+      - name: iam-backoffice
+        image: registry.deti/egs-washify/iam-backoffice:v5
+        ports:
+        - containerPort: 5002
+
+---
+# IAM BackOffice
+apiVersion: v1
+kind: Service
+metadata:
+  name: iam-backoffice
+  namespace: egs-washify
+spec:
+  selector:
+    app: iam-backoffice
+  ports:
+    - protocol: TCP
+      port: 84
+      targetPort: 5002
+  type: LoadBalancer
+
+---
+# Booking and Scheduling Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking-service
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: booking-service
+  template:
+    metadata:
+      labels:
+        app: booking-service
+    spec:
+      containers:
+      - name: booking-service
+        image: registry.deti/egs-washify/booking-service:v3
+        ports:
+        - containerPort: 8001
+
+---
+# Booking Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: booking-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: booking-service
+  ports:
+    - protocol: TCP
+      port: 85
+      targetPort: 8001
+  type: LoadBalancer
+
+---
+# MySQL Database Deployment for Booking and Scheduling
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: booking-mysql
+  namespace: egs-washify
+spec:
+  selector:
+    matchLabels:
+      app: booking-mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: booking-mysql
+    spec:
+      containers:
+      - image: mysql:latest
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: password
+        ports:
+        - containerPort: 3306
+
+---
+# MySQL Service for Booking and Scheduling
+apiVersion: v1
+kind: Service
+metadata:
+  name: booking-mysql-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: booking-mysql
+  ports:
+    - protocol: TCP
+      port: 3306
+      targetPort: 3306
+  type: ClusterIP
+
+---
+# Payment Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payment-service
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payment-service
+  template:
+    metadata:
+      labels:
+        app: payment-service
+    spec:
+      containers:
+      - name: payment-service
+        image: registry.deti/egs-washify/payment-service:v2
+        ports:
+        - containerPort: 8002
+
+---
+# Payment Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: payment-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: payment-service
+  ports:
+  - protocol: TCP
+    port: 86
+    targetPort: 8002
+  type: LoadBalancer
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: washify-k3s
+  namespace: egs-washify
+  annotations:
+    traefik.ingress.kubernetes.io/frontend-entry-points: http,https
+    traefik.ingress.kubernetes.io/redirect-entry-point: https
+    traefik.ingress.kubernetes.io/redirect-permanent: "true"
+spec:
+  rules:
+  - host: grupo3-egs-deti.ua.pt
+    http:
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: nginx-service
+              port:
+                number: 80
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: egs-washify
+data:
+  nginx.conf: |
+    user nginx;
+    worker_processes auto;
+    error_log /var/log/nginx/error.log notice;
+    pid /var/run/nginx.pid;
+
+    events {
+      worker_connections 1024;
+    }
+
+    http {
+      log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+      access_log /var/log/nginx/access.log main;
+
+      sendfile on;
+      tcp_nopush on;
+      tcp_nodelay on;
+      keepalive_timeout 65;
+      types_hash_max_size 2048;
+
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+
+      upstream flutter_web_app {
+          server flutter-service:81;
+      }
+
+      upstream composer_service {
+          server node-sv-service:82;
+      }
+
+      upstream iam_service {
+          server iam-service:83;
+      }
+
+      upstream back_office_service {
+          server iam-backoffice:84;
+      }
+
+      upstream booking_service {
+          server booking-service:85;
+      }
+
+      upstream payment_service {
+          server payment-service:86;
+      }
+
+      server {
+          listen 80 default_server;
+          server_name grupo3-egs-deti.ua.pt;
+
+          location / {
+              proxy_pass http://flutter_web_app;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /api {
+              rewrite ^/api/?(.*)$ /$1 break;
+              proxy_pass http://composer_service;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /iam {
+              proxy_pass http://iam_service;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /static/ {
+              proxy_pass http://iam_service/static/;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /backoffice {
+              proxy_pass http://back_office_service;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /bookings {
+              rewrite ^/bookings/?(.*)$ /$1 break;
+              proxy_pass http://booking_service;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          location /payments {
+              proxy_pass http://payment_service;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+    }
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  namespace: egs-washify
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: nginx-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-service
+  namespace: egs-washify
+spec:
+  selector:
+    app: nginx
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
